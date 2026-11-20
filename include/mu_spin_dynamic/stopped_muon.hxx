@@ -1,11 +1,13 @@
 #pragma once
 
-#include "../crmusr_common.hxx"
-#include "TRandom3.h"
+#include "types.hxx"
+#include "rng.hxx"
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <stdexcept>
+#include <vector>
 
 namespace stopped_muon {
 
@@ -47,7 +49,8 @@ inline void validate_domain_field(const DomainFieldModel& model) {
     }
 }
 
-inline Vec3 sample_domain_field(const DomainFieldModel& model, TRandom3& rng) {
+template <typename Rng>
+inline Vec3 sample_domain_field(const DomainFieldModel& model, Rng& rng) {
     validate_domain_field(model);
     if (model.mode == DomainFieldMode::None || model.internal_field_T == 0) {
         return {0, 0, 0};
@@ -189,8 +192,9 @@ private:
     double b_, parallel_, perpendicular_, lambda1_, lambda2_;
 };
 
+template <typename Rng>
 inline SpinEvolution sample_spin_evolution(SpinState state, const Vec3& p0,
-                                         const SpinParameters& parameters, TRandom3& rng) {
+                                         const SpinParameters& parameters, Rng& rng) {
     // Validate before consuming random numbers, including when delta is zero.
     const SpinEvolution validated(state, p0, parameters);
     if (parameters.delta == 0) return validated;
@@ -208,8 +212,9 @@ public:
         Vec3 local_field;
     };
 
+    template <typename Rng>
     HoppingTrajectory(SpinState state, const Vec3& p0, const SpinParameters& parameters,
-                      double duration, TRandom3& rng, std::size_t max_hops = 100000)
+                      double duration, Rng& rng, std::size_t max_hops = 100000)
         : external_(parameters.external_field), duration_(duration),
           signed_gamma_(state == SpinState::MuMinus ? -gamma_muon : gamma_muon) {
         if (state != SpinState::MuPlus && state != SpinState::MuMinus) {

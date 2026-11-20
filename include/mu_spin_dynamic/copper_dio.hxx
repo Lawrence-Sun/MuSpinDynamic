@@ -2,6 +2,7 @@
 
 #include "bound_dio.hxx"
 
+#include <cstddef>
 #include <stdexcept>
 #include <utility>
 
@@ -28,8 +29,9 @@ public:
         return inner_.density(energy);
     }
 
+    template <typename Rng>
     DioElectron sample(
-            const Vec3& polarization, TRandom3& rng, std::size_t max_trials = 100000) const {
+            const Vec3& polarization, Rng& rng, std::size_t max_trials = 100000) const {
         return inner_.sample(polarization, rng, max_trials);
     }
 

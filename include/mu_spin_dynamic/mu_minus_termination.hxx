@@ -22,9 +22,10 @@ struct MuMinusTermination {
     Vec3 polarization() const { return mu_minus_polarization(density); }
 };
 
+template <typename Rng>
 inline MuMinusTermination sample_mu_minus_termination(
         const MuMinusSecularTrajectory& trajectory,
-        const MuMinusTerminationRates& rates, TRandom3& rng) {
+        const MuMinusTerminationRates& rates, Rng& rng) {
     require_nonnegative(rates.dio_ns, "DIO rate must be finite and >= 0");
     require_nonnegative(rates.capture_ns, "capture rate must be finite and >= 0");
     const double total = rates.dio_ns + rates.capture_ns;

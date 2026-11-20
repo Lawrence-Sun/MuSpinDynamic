@@ -1,4 +1,6 @@
-#include "spin_dynamic_decay.hxx"
+#include "mu_spin_dynamic/root_io.hxx"
+
+#include "TRandom3.h"
 
 #include <cctype>
 #include <cstdlib>

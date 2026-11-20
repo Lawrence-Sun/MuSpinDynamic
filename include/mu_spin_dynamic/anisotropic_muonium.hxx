@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <cstddef>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -15,7 +16,8 @@ namespace stopped_muon {
 
 namespace anisotropic_muonium_detail {
 
-inline Vec3 sample_unit_sphere(TRandom3& rng) {
+template <typename Rng>
+inline Vec3 sample_unit_sphere(Rng& rng) {
     const double z = 2 * rng.Rndm() - 1;
     const double phi = 2 * pi * rng.Rndm();
     const double rho = std::sqrt(std::max(0., 1 - z * z));
@@ -208,9 +210,10 @@ public:
         AnisotropicMuoniumEvolution evolution;
     };
 
+    template <typename Rng>
     AnisotropicMuoniumTrajectory(
             const Vec3& p0, const AnisotropicMuoniumParameters& parameters,
-            double duration, TRandom3& rng, std::size_t max_hops = 100000)
+            double duration, Rng& rng, std::size_t max_hops = 100000)
         : duration_(duration) {
         // Validate all deterministic inputs before consuming any RNG draws.
         require_nonnegative(duration, "anisotropic muonium duration must be finite and >= 0");
@@ -869,9 +872,10 @@ public:
         TwoStateExchangeEvolution evolution;
     };
 
+    template <typename Rng>
     TwoStateExchangeTrajectory(
             const Vec3& p0, const TwoStateExchangeParameters& parameters,
-            double duration, TRandom3& rng, std::size_t max_hops = 100000)
+            double duration, Rng& rng, std::size_t max_hops = 100000)
         : duration_(duration) {
         // Validate all deterministic inputs before consuming any RNG draws.
         require_nonnegative(duration, "two-state exchange duration must be finite and >= 0");

@@ -1,0 +1,22 @@
+# Build outputs
+build/
+build-*/
+CMakeFiles/
+CMakeCache.txt
+
+# Compiled artifacts & ROOT ACLiC outputs
+*.o
+*.a
+*.so
+*.dylib
+*.pcm
+*.d
+*_cxx_ACLiC_dict_rdict.pcm
+
+# Generated ROOT data files
+*.root
+
+# OS / editor noise
+.DS_Store
+.vscode/
+.idea/

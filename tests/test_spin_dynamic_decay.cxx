@@ -1,4 +1,6 @@
-#include "spin_dynamic_decay.hxx"
+#include "mu_spin_dynamic/root_io.hxx"
+
+#include "TRandom3.h"
 
 #include <cmath>
 #include <filesystem>
@@ -146,7 +148,8 @@ int test_spin_dynamic_decay() {
     // 4. Mode B ROOT TTree round-trip:
     //    Input .root (1 entry = 1 muon) -> Output .root (1 entry = 1 Michel/DIO electron)
     {
-        const std::filesystem::path tmp_dir = "spin_dynamic_decay/build/tmp_root_test";
+        const std::filesystem::path tmp_dir =
+            std::filesystem::temp_directory_path() / "muspindynamic_root_test";
         std::filesystem::create_directories(tmp_dir);
         const std::string in_root = (tmp_dir / "input_muons.root").string();
         const std::string out_root = (tmp_dir / "output_electrons.root").string();

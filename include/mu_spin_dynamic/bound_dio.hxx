@@ -3,6 +3,7 @@
 #include "stopped_muon.hxx"
 #include "bound_dio_data.hxx"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -87,8 +88,9 @@ public:
         return {N, beta};
     }
 
+    template <typename Rng>
     DioElectron sample(
-            const Vec3& polarization, TRandom3& rng, std::size_t max_trials = 100000) const {
+            const Vec3& polarization, Rng& rng, std::size_t max_trials = 100000) const {
         const double magnitude = polarization.R();
         if (!finite(polarization) || !std::isfinite(magnitude) || magnitude > 1) {
             throw std::invalid_argument("DIO polarization must be finite with |P|<=1");

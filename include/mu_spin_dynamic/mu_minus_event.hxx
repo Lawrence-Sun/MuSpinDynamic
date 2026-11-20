@@ -3,7 +3,10 @@
 #include "copper_dio.hxx"
 #include "mu_minus_initial_state.hxx"
 #include "mu_minus_termination.hxx"
+#include <cstddef>
 #include <optional>
+#include <stdexcept>
+#include <utility>
 
 namespace stopped_muon {
 
@@ -26,8 +29,9 @@ struct MuMinusEvent {
     int charge = -1;
 };
 
+template <typename Rng>
 inline MuMinusEvent simulate_stopped_mu_minus(
-        const MuMinusMaterial& material, const Vec3& p_stop, TRandom3& rng) {
+        const MuMinusMaterial& material, const Vec3& p_stop, Rng& rng) {
     const CopperDioSpectrum spectrum(material.isotope);
     if (material.max_dio_trials == 0)
         throw std::invalid_argument("Cu DIO trial budget must be positive");

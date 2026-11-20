@@ -1,0 +1,16 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(ROOT REQUIRED COMPONENTS GenVector Matrix)
+
+if(@MUSPINDYNAMIC_HAS_ROOT_IO@)
+    find_dependency(ROOT QUIET OPTIONAL_COMPONENTS RIO Tree Physics)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/MuSpinDynamicTargets.cmake")
+
+if(TARGET MuSpinDynamic::Core AND NOT TARGET MuSpinDynamic::MuSpinDynamic)
+    add_library(MuSpinDynamic::MuSpinDynamic ALIAS MuSpinDynamic::Core)
+endif()
+
+check_required_components(MuSpinDynamic)

@@ -1,7 +1,12 @@
 #pragma once
 
 #include "anisotropic_muonium.hxx"
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
 #include <optional>
+#include <stdexcept>
+#include <utility>
 #include <variant>
 
 namespace stopped_muon {
@@ -18,7 +23,8 @@ struct MichelPositron {
     const char* model = free_michel_model;
 };
 
-inline MichelPositron sample_muplus_michel(const Vec3& polarization, TRandom3& rng) {
+template <typename Rng>
+inline MichelPositron sample_muplus_michel(const Vec3& polarization, Rng& rng) {
     const double magnitude = polarization.R();
     if (!finite(polarization) || !std::isfinite(magnitude) || magnitude > 1 + 2e-9) {
         throw std::invalid_argument("Michel polarization must be finite with |P|<=1 (2e-9 roundoff tolerance)");
@@ -94,8 +100,9 @@ struct MuPlusEvent {
     }
 };
 
+template <typename Rng>
 inline MuPlusEvent simulate_stopped_muon(const MuPlusMaterial& material, int charge,
-                                         const Vec3& p0, TRandom3& rng) {
+                                         const Vec3& p0, Rng& rng) {
     if (charge != 1) throw std::invalid_argument("stage B supports charge=+1 only; mu- capture/DIO is not implemented");
     // Deterministic input failures do not consume RNG; stochastic trajectory-budget failures can.
     (void)SpinEvolution(SpinState::MuPlus, p0, {material.external_field, 0, 0});

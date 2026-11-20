@@ -4,8 +4,11 @@
 #include "TMatrixDSym.h"
 #include "TMatrixDSymEigen.h"
 
+#include <algorithm>
 #include <array>
 #include <complex>
+#include <cstddef>
+#include <vector>
 
 namespace stopped_muon {
 
@@ -137,8 +140,9 @@ public:
         MuoniumEvolution evolution;
     };
 
+    template <typename Rng>
     MuoniumHoppingTrajectory(const Vec3& p0, const MuoniumParameters& parameters,
-                            double duration, TRandom3& rng, std::size_t max_hops = 100000)
+                            double duration, Rng& rng, std::size_t max_hops = 100000)
         : duration_(duration) {
         // Validate deterministic inputs before drawing a field history.
         const MuoniumEvolution validated(p0, parameters.external_field, parameters.hyperfine);

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 
 namespace stopped_muon {
 
@@ -44,8 +45,9 @@ struct MuMinusSpin0Event {
     std::size_t hop_count() const { return trajectory.hop_count(); }
 };
 
+template <typename Rng>
 inline MuMinusSpin0Event simulate_stopped_mu_minus_spin0(
-        const MuMinusSpin0Material& material, const Vec3& p_stop, TRandom3& rng) {
+        const MuMinusSpin0Material& material, const Vec3& p_stop, Rng& rng) {
     // Validate all deterministic inputs before consuming any RNG draws.
     if (!finite(p_stop) || !std::isfinite(p_stop.R()) || p_stop.R() > 1) {
         throw std::invalid_argument("mu- spin-0 p_stop must be finite with |p_stop| <= 1");
