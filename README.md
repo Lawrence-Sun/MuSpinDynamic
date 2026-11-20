@@ -31,6 +31,9 @@ MuSpinDynamic/
 │                                      # mu-(1/2) ⊗ Cu(3/2) 8×8 级联初态、超精细+双自旋塞曼演化及 F+ -> F- M1 跃迁轨迹
 ├── apps/
 │   └── spin_dynamic_decay.cxx         # 独立命令行程序与 ROOT 宏入口（方案 A / 方案 B）
+├── notebooks/
+│   └── spin_dynamic_decay_analysis.ipynb
+│                                      # 上下游 Geant4 联调与铜/铁/硫多靶材物理分析与出图 Notebook
 └── tests/
     ├── test_core_only.cxx             # 纯核心隔离测试（仅链接 MuSpinDynamic::Core，验证无 I/O 与全局污染及自定义 RNG）
     └── test_spin_dynamic_decay.cxx    # 完整物理断言与 .root -> .root 回读闭合测试

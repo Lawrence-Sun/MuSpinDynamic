@@ -13,8 +13,10 @@ CMakeCache.txt
 *.d
 *_cxx_ACLiC_dict_rdict.pcm
 
-# Generated ROOT data files
+# Generated ROOT data files & notebook runtime outputs
 *.root
+notebooks/output/
+.ipynb_checkpoints/
 
 # OS / editor noise
 .DS_Store
