@@ -47,7 +47,8 @@ struct MuMinusSpin0Event {
 
 template <typename Rng>
 inline MuMinusSpin0Event simulate_stopped_mu_minus_spin0(
-        const MuMinusSpin0Material& material, const Vec3& p_stop, Rng& rng) {
+        const MuMinusSpin0Material& material, const Vec3& p_stop, Rng& rng,
+        bool sample_lepton = true) {
     // Validate all deterministic inputs before consuming any RNG draws.
     if (!finite(p_stop) || !std::isfinite(p_stop.R()) || p_stop.R() > 1) {
         throw std::invalid_argument("mu- spin-0 p_stop must be finite with |p_stop| <= 1");
@@ -108,7 +109,7 @@ inline MuMinusSpin0Event simulate_stopped_mu_minus_spin0(
     const Vec3 decay_p = trajectory.polarization(time_ns);
 
     std::optional<DioElectron> electron;
-    if (channel == MuMinusTerminationChannel::DIO) {
+    if (sample_lepton && channel == MuMinusTerminationChannel::DIO) {
         electron = spectrum.sample(decay_p, rng, material.max_dio_trials);
     }
 

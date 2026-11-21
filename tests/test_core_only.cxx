@@ -1,3 +1,4 @@
+#include "mu_spin_dynamic/material_config.hxx"
 #include "mu_spin_dynamic/spin_dynamic_decay.hxx"
 
 #include <cmath>
@@ -52,16 +53,25 @@ int main() {
             check(r.lepton_pdg == -11 && r.lepton_charge == +1, "mu+ lepton must be e+");
             check(r.elapsed_time_ns >= 0.0 && std::isfinite(r.decay_time_ns), "valid decay time");
             check(r.decay_polarization.R() <= 1.0 + 1e-6, "|P_decay| <= 1");
-            check(r.total_energy_MeV > 0.0 && r.total_energy_MeV <= r.endpoint_energy_MeV + 1e-9,
-                  "valid Michel energy");
+            check(r.total_energy_MeV > mu_spin_dynamic::electron_mass_MeV &&
+                  r.total_energy_MeV <= mu_spin_dynamic::michel_endpoint_MeV + 1e-12,
+                  "valid finite-me Michel energy");
+            const double expected_p = std::sqrt(
+                (r.total_energy_MeV - mu_spin_dynamic::electron_mass_MeV) *
+                (r.total_energy_MeV + mu_spin_dynamic::electron_mass_MeV));
+            check(std::abs(r.momentum_mag_MeV_c - expected_p) < 1e-11,
+                  "finite-me Michel mass shell violated");
+            check(std::abs(r.kinetic_energy_MeV - (r.total_energy_MeV - mu_spin_dynamic::electron_mass_MeV)) < 1e-12,
+                  "finite-me Michel kinetic energy mismatch");
             check(std::abs(r.direction.R() - 1.0) < 1e-9, "unit lepton direction");
-            assertions += 6;
+            assertions += 8;
         }
     }
 
-    // 2. mu- presets: Cu-63 (I=3/2), Fe-56 (I=0, ferromagnetic), S-32 (I=0)
+    // 2. mu- presets: Cu-63, natural Cu (63/65), Fe-56 (I=0, ferromagnetic), S-32 (I=0)
     const mu_spin_dynamic::AnyMuMinusMaterial mu_minus_presets[] = {
         mu_spin_dynamic::make_copper_mu_minus_conditional(63, B_ext),
+        mu_spin_dynamic::make_natural_copper_mu_minus_conditional(B_ext),
         mu_spin_dynamic::make_iron_mu_minus_conditional(B_ext),
         mu_spin_dynamic::make_sulfur_mu_minus_conditional(B_ext),
     };
@@ -91,7 +101,62 @@ int main() {
         ++assertions;
     }
 
-    // 3. UniformRngAdapter statistical sanity (Exp mean & Gaus moments)
+    // 3. Spin-evolution-only interface (NLO hook) exact match with full simulation up to decay time
+    {
+        const auto cu_plus = mu_spin_dynamic::make_copper_mu_plus_example(B_ext);
+        const auto nat_cu_minus = mu_spin_dynamic::make_natural_copper_mu_minus_conditional(B_ext);
+        for (int i = 0; i < 40; ++i) {
+            auto rng_spin = mu_spin_dynamic::make_event_replica_rng(9001ULL, 500 + i, 2);
+            auto rng_full = mu_spin_dynamic::make_event_replica_rng(9001ULL, 500 + i, 2);
+            const auto term = mu_spin_dynamic::evolve_stopped_muon_to_termination(
+                mu_plus, cu_plus, nat_cu_minus, rng_spin, i, 2, 0.25);
+            const auto full = mu_spin_dynamic::simulate_stopped_muon_decay(
+                mu_plus, cu_plus, nat_cu_minus, rng_full, i, 2, 0.25);
+            check(term.will_emit_lepton && full.has_decay_lepton, "mu+ must emit lepton");
+            check(term.replica_id == 2 && full.replica_id == 2, "replica_id propagation");
+            check(std::abs(term.weight - 0.25) < 1e-15 && std::abs(full.weight - 0.25) < 1e-15, "weight scaling");
+            check(term.decay_time_ns == full.decay_time_ns &&
+                  term.decay_polarization.X() == full.decay_polarization.X() &&
+                  term.decay_polarization.Y() == full.decay_polarization.Y() &&
+                  term.decay_polarization.Z() == full.decay_polarization.Z(),
+                  "spin-only interface must match full decay time and polarization bit-for-bit");
+            assertions += 4;
+        }
+        for (int i = 0; i < 40; ++i) {
+            auto rng_spin = mu_spin_dynamic::make_event_replica_rng(9002ULL, 600 + i, 0);
+            auto rng_full = mu_spin_dynamic::make_event_replica_rng(9002ULL, 600 + i, 0);
+            const auto term = mu_spin_dynamic::evolve_stopped_muon_to_termination(
+                mu_minus, cu_plus, nat_cu_minus, rng_spin, i, 0, 1.0);
+            const auto full = mu_spin_dynamic::simulate_stopped_muon_decay(
+                mu_minus, cu_plus, nat_cu_minus, rng_full, i, 0, 1.0);
+            check(term.will_emit_lepton == full.has_decay_lepton &&
+                  term.decay_time_ns == full.decay_time_ns &&
+                  std::string(term.spin_category) == std::string(full.spin_category) &&
+                  std::string(term.termination) == std::string(full.termination),
+                  "mu- spin-only interface must match full termination outcome");
+            ++assertions;
+        }
+    }
+
+    // 4. Shared MaterialConfig / build_material_pair covers all presets (default copper is natural)
+    {
+        for (const char* name : {"copper", "iron", "iron_pure", "iron_commercial", "sulfur", "quartz", "glass", "free"}) {
+            mu_spin_dynamic::MaterialConfig cfg{};
+            cfg.preset = name;
+            const auto pair = mu_spin_dynamic::build_material_pair(cfg);
+            if (std::string(name) == "copper") {
+                check(pair.mu_minus.has_value() &&
+                      std::holds_alternative<mu_spin_dynamic::NaturalCopperMuMinusMaterial>(*pair.mu_minus),
+                      "default copper preset must use NaturalCopperMuMinusMaterial");
+                ++assertions;
+            }
+            const auto r = mu_spin_dynamic::simulate_mu_plus_decay(mu_plus, pair.mu_plus, rng, 0);
+            check(r.has_decay_lepton, "MaterialConfig preset mu+ simulation failed");
+            ++assertions;
+        }
+    }
+
+    // 5. UniformRngAdapter statistical sanity (Exp mean & Gaus moments)
     {
         constexpr int N = 10000;
         double sum_exp = 0.0;

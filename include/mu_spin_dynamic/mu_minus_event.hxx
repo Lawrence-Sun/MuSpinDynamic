@@ -31,7 +31,8 @@ struct MuMinusEvent {
 
 template <typename Rng>
 inline MuMinusEvent simulate_stopped_mu_minus(
-        const MuMinusMaterial& material, const Vec3& p_stop, Rng& rng) {
+        const MuMinusMaterial& material, const Vec3& p_stop, Rng& rng,
+        bool sample_lepton = true) {
     const CopperDioSpectrum spectrum(material.isotope);
     if (material.max_dio_trials == 0)
         throw std::invalid_argument("Cu DIO trial budget must be positive");
@@ -39,7 +40,7 @@ inline MuMinusEvent simulate_stopped_mu_minus(
     MuMinusSecularTrajectory trajectory(initial, material.spin, material.conversion_rate_ns);
     auto termination = sample_mu_minus_termination(trajectory, material.rates, rng);
     std::optional<DioElectron> electron;
-    if (termination.channel == MuMinusTerminationChannel::DIO)
+    if (sample_lepton && termination.channel == MuMinusTerminationChannel::DIO)
         electron = spectrum.sample(termination.polarization(), rng, material.max_dio_trials);
     return {material.isotope, p_stop, std::move(termination), std::move(electron), std::move(trajectory)};
 }

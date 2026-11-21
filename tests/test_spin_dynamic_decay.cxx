@@ -1,11 +1,15 @@
+#include "mu_spin_dynamic/material_config.hxx"
 #include "mu_spin_dynamic/root_io.hxx"
 
 #include "TRandom3.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -79,14 +83,42 @@ int test_spin_dynamic_decay() {
         check(std::abs(r1.decay_time_ns - (150.0 + r1.elapsed_time_ns)) < 1e-12, "decay_time_ns mismatch");
         check(r1.has_decay_lepton && r1.lepton_pdg == -11 && r1.lepton_charge == +1,
               "mu+ must emit positron (PDG -11)");
-        check(r1.total_energy_MeV > 0 && r1.total_energy_MeV <= 0.5 * muon_mass_MeV, "positron energy out of range");
-        check(std::abs(r1.momentum_mag_MeV_c - r1.total_energy_MeV) < 1e-12, "massless Michel |p| == E violated");
+        check(r1.total_energy_MeV > electron_mass_MeV && r1.total_energy_MeV <= michel_endpoint_MeV,
+              "finite-me positron energy out of range");
+        const double expected_p = std::sqrt(
+            (r1.total_energy_MeV - electron_mass_MeV) * (r1.total_energy_MeV + electron_mass_MeV));
+        check(std::abs(r1.momentum_mag_MeV_c - expected_p) < 1e-11, "finite-me Michel mass shell violated");
+        check(std::abs(r1.kinetic_energy_MeV - (r1.total_energy_MeV - electron_mass_MeV)) < 1e-12,
+              "finite-me Michel kinetic energy mismatch");
+        check(std::string(r1.spectrum_model) == "free_michel_LO_finite_me",
+              "unexpected Michel spectrum_model tag");
         check(std::abs(r1.direction.R() - 1.0) < 1e-12, "direction must be unit vector");
         check(r1.total_energy_MeV == r2.total_energy_MeV &&
               r1.momentum_MeV_c.X() == r2.momentum_MeV_c.X() &&
               r1.decay_time_ns == r2.decay_time_ns,
               "fixed-seed replay mismatch for mu+");
-        assertions += 9;
+        assertions += 11;
+
+        // Statistical sanity of finite-me Michel spectrum: <x> ~ 0.70, <cos theta> for P=+z ~ 1/9
+        {
+            TRandom3 michel_rng(2027);
+            constexpr int N = 40000;
+            double sum_x = 0.0;
+            double sum_cos = 0.0;
+            for (int i = 0; i < N; ++i) {
+                const auto pos = sample_muplus_michel({0.0, 0.0, 1.0}, michel_rng);
+                const double p_norm = pos.momentum_MeV_c.R();
+                check(pos.energy_MeV > electron_mass_MeV && pos.energy_MeV <= michel_endpoint_MeV,
+                      "sampled Michel energy out of bounds");
+                sum_x += pos.energy_MeV / michel_endpoint_MeV;
+                sum_cos += pos.momentum_MeV_c.Z() / p_norm;
+            }
+            const double mean_x = sum_x / N;
+            const double mean_cos = sum_cos / N;
+            check(std::abs(mean_x - 0.70) < 0.01, "finite-me Michel mean reduced energy out of expected range");
+            check(std::abs(mean_cos - (1.0 / 9.0)) < 0.015, "finite-me Michel mean cos(theta) out of expected range");
+            assertions += 2;
+        }
 
         bool saw_muonium = false, saw_free = false;
         for (int i = 0; i < 100; ++i) {
@@ -143,6 +175,30 @@ int test_spin_dynamic_decay() {
                   "Cu mu- DIO branching count outside expected statistical range");
             ++assertions;
         }
+
+        // 3b. Natural copper abundance sampling (69.15% Cu63 / 30.85% Cu65) via MaterialConfig default
+        {
+            MaterialConfig cfg{};
+            cfg.preset = "copper";
+            const MaterialPair mats = build_material_pair(cfg);
+            check(mats.mu_minus.has_value() &&
+                  std::holds_alternative<NaturalCopperMuMinusMaterial>(*mats.mu_minus),
+                  "default copper MaterialConfig must build NaturalCopperMuMinusMaterial");
+            TRandom3 rng(3099);
+            const StoppedMuonState st{101, {0, 0, 0}, {0, 0, -1}, -1, 0.0};
+            int n63 = 0, n65 = 0;
+            constexpr int N = 4000;
+            for (int i = 0; i < N; ++i) {
+                const auto r = evolve_stopped_muon_to_termination(st, mats.mu_plus, mats.mu_minus, rng, i);
+                if (std::string(r.spin_category) == "cu63_mu_minus") ++n63;
+                else if (std::string(r.spin_category) == "cu65_mu_minus") ++n65;
+                else check(false, "unexpected spin_category for natural copper");
+            }
+            const double frac63 = static_cast<double>(n63) / N;
+            check(n63 + n65 == N && std::abs(frac63 - natural_copper_cu63_abundance) < 0.03,
+                  "natural copper 63Cu/65Cu sampling fraction outside statistical tolerance");
+            assertions += 2;
+        }
     }
 
     // 4. Mode B ROOT TTree round-trip:
@@ -197,7 +253,8 @@ int test_spin_dynamic_decay() {
         }
 
         const Long64_t written_electrons = write_michel_electrons_root(
-            out_root, sim_results, true, "michel_electrons", 777, "copper", {0, 100e-6, 0});
+            out_root, sim_results, true, "michel_electrons", 777, "copper", {0, 100e-6, 0},
+            /*keep_captures=*/false);
         check(written_electrons == expected_electrons, "written electron count mismatch");
         check(written_electrons > n_plus && written_electrons < n_plus + n_minus,
               "written electron count should include all mu+ plus DIO subset of mu-");
@@ -264,6 +321,127 @@ int test_spin_dynamic_decay() {
             assertions += 8;
         }
         f->Close();
+
+        // 4b. Mode 3 streaming batch: replicas=4, keep_captures=true, weight conservation,
+        //     event-seeded distributed invariance (reversed/sharded order gives identical per-(event_id, replica_id)),
+        //     and duplicate event_id rejection.
+        {
+            for (std::size_t i = 0; i < input_muons.size(); ++i) {
+                input_muons[i].weight = 1.0 + 0.01 * static_cast<double>(i % 7);
+            }
+            const std::string in_full = (tmp_dir / "in_weighted.root").string();
+            const std::string in_rev = (tmp_dir / "in_weighted_rev.root").string();
+            const std::string in_dup = (tmp_dir / "in_dup.root").string();
+            const std::string out_full = (tmp_dir / "out_stream_full.root").string();
+            const std::string out_rev = (tmp_dir / "out_stream_rev.root").string();
+            const std::string out_dup = (tmp_dir / "out_dup.root").string();
+
+            write_stopped_muons_root(in_full, input_muons, true);
+            auto rev_muons = input_muons;
+            std::reverse(rev_muons.begin(), rev_muons.end());
+            write_stopped_muons_root(in_rev, rev_muons, true);
+
+            auto dup_muons = input_muons;
+            dup_muons[1].event_id = dup_muons[0].event_id;
+            write_stopped_muons_root(in_dup, dup_muons, true);
+
+            MaterialConfig cfg{};
+            cfg.preset = "copper";
+            cfg.external_field = {0, 100e-6, 0};
+            cfg.field_explicit = true;
+            const MaterialPair mats = build_material_pair(cfg);
+
+            BatchOptions bopt{};
+            bopt.overwrite = true;
+            bopt.replicas = 4;
+            bopt.keep_captures = true;
+            bopt.event_seeded = true;
+            bopt.seed = 12345;
+            bopt.preset_name = "copper";
+            bopt.external_field_T = mats.effective_field;
+
+            const BatchSummary sum_full = process_stopped_muons_root_streaming(
+                in_full, out_full, mats.mu_plus, mats.mu_minus, bopt);
+            const BatchSummary sum_rev = process_stopped_muons_root_streaming(
+                in_rev, out_rev, mats.mu_plus, mats.mu_minus, bopt);
+
+            const Long64_t expected_total = static_cast<Long64_t>(input_muons.size()) * 4;
+            check(sum_full.n_input_muons == static_cast<Long64_t>(input_muons.size()), "streaming n_input_muons mismatch");
+            check(sum_full.n_simulated_events == expected_total, "streaming n_simulated_events mismatch");
+            check(sum_full.n_written_entries == expected_total, "keep_captures=true must write all simulated events");
+            check(sum_full.n_emitted_leptons + sum_full.n_nuclear_captures == expected_total,
+                  "streaming branching closure failed");
+            check(sum_full.n_nuclear_captures > 0, "expected mu- nuclear captures in copper batch");
+            check(std::abs(sum_full.sum_output_weights - sum_full.sum_input_weights) < 1e-10,
+                  "weight conservation failed for replicas=4 with keep_captures=true");
+            check(sum_rev.n_emitted_leptons == sum_full.n_emitted_leptons &&
+                  sum_rev.n_nuclear_captures == sum_full.n_nuclear_captures,
+                  "event-seeded streaming totals must be invariant to input order / sharding");
+            assertions += 7;
+
+            // Duplicate event_id must throw under event_seeded=true, but succeed under sequential RNG.
+            check_throws([&]() {
+                process_stopped_muons_root_streaming(in_dup, out_dup, mats.mu_plus, mats.mu_minus, bopt);
+            }, "duplicate event_id must be rejected when event_seeded=true");
+            BatchOptions seq_opt = bopt;
+            seq_opt.event_seeded = false;
+            const BatchSummary sum_seq = process_stopped_muons_root_streaming(
+                in_dup, out_dup, mats.mu_plus, mats.mu_minus, seq_opt);
+            check(sum_seq.n_written_entries == expected_total, "sequential fallback should allow duplicate event_id");
+            assertions += 2;
+
+            // Verify per-(event_id, replica_id) bit-for-bit equality between full and reversed runs,
+            // plus nuclear capture placeholder invariants (electron_id == -1, has_decay_lepton == false, NaN energy).
+            auto read_map = [](const std::string& path) {
+                struct Row {
+                    Long64_t electron_id;
+                    Bool_t has_lepton;
+                    Double_t weight;
+                    Double_t decay_time_ns;
+                    Double_t energy;
+                    Double_t px;
+                };
+                std::map<std::pair<Long64_t, Int_t>, Row> rows;
+                std::unique_ptr<TFile> tf(TFile::Open(path.c_str(), "READ"));
+                auto* t = dynamic_cast<TTree*>(tf->Get("michel_electrons"));
+                Long64_t eid = 0, elid = 0;
+                Int_t rep = 0;
+                Bool_t has_l = kFALSE;
+                Double_t w = 0, dt = 0, en = 0, pxv = 0;
+                t->SetBranchAddress("event_id", &eid);
+                t->SetBranchAddress("replica_id", &rep);
+                t->SetBranchAddress("electron_id", &elid);
+                t->SetBranchAddress("has_decay_lepton", &has_l);
+                t->SetBranchAddress("weight", &w);
+                t->SetBranchAddress("decay_time_ns", &dt);
+                t->SetBranchAddress("total_energy_MeV", &en);
+                t->SetBranchAddress("px_MeV_c", &pxv);
+                for (Long64_t i = 0; i < t->GetEntries(); ++i) {
+                    t->GetEntry(i);
+                    rows[{eid, rep}] = {elid, has_l, w, dt, en, pxv};
+                }
+                return rows;
+            };
+            const auto map_full = read_map(out_full);
+            const auto map_rev = read_map(out_rev);
+            check(map_full.size() == static_cast<std::size_t>(expected_total) && map_rev.size() == map_full.size(),
+                  "unique (event_id, replica_id) key count mismatch");
+            for (const auto& [key, r_full] : map_full) {
+                const auto& r_rev = map_rev.at(key);
+                check(r_full.has_lepton == r_rev.has_lepton &&
+                      r_full.weight == r_rev.weight &&
+                      r_full.decay_time_ns == r_rev.decay_time_ns,
+                      "per-(event_id, replica_id) determinism violated across input reordering");
+                if (r_full.has_lepton) {
+                    check(r_full.electron_id >= 0 && r_full.energy == r_rev.energy && r_full.px == r_rev.px,
+                          "emitted lepton kinematics mismatch across input reordering");
+                } else {
+                    check(r_full.electron_id == -1 && std::isnan(r_full.energy) && std::isnan(r_full.px),
+                          "nuclear capture placeholder invariants violated");
+                }
+            }
+            assertions += 3;
+        }
         std::filesystem::remove_all(tmp_dir);
     }
 

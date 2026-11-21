@@ -16,14 +16,15 @@ MuSpinDynamic/
 ├── CMakeLists.txt
 ├── cmake/MuSpinDynamicConfig.cmake.in
 ├── include/mu_spin_dynamic/
-│   ├── types.hxx                      # 单位、物理常量与 Vec2/Vec3（收敛在 stopped_muon / mu_spin_dynamic 命名空间）
-│   ├── rng.hxx                        # UniformRngAdapter / make_uniform_rng()，兼容 TRandom3 与任意 [0,1) 回调（如 G4UniformRand）
-│   ├── spin_dynamic_decay.hxx         # 纯单事例统一 API 与参考材料预设（无 TFile/TTree 依赖）
-│   ├── root_io.hxx                    # 可选 ROOT TTree 批处理读写（方案 B）
+│   ├── types.hxx                      # 单位、物理常量（含 muon_mass_MeV / electron_mass_MeV）与 Vec2/Vec3
+│   ├── rng.hxx                        # UniformRngAdapter / make_uniform_rng() 与按 (seed, event_id, replica_id) 确定性派生的 EventReplicaRng
+│   ├── spin_dynamic_decay.hxx         # 纯单事例统一 API（含仅自旋演化轻接口 evolve_* 与自然铜同位素封装）与参考材料预设
+│   ├── material_config.hxx            # 共享纯头文件材料配置与工厂 build_material_pair()（供 Geant4 模式 1 与 CLI 模式 3 共用）
+│   ├── root_io.hxx                    # 可选 ROOT TTree 流式批处理读写（支持事件分裂 --replicas 与核俘获占位）
 │   ├── stopped_muon.hxx               # 普通 mu± 格点跳跃强碰撞轨迹 HoppingTrajectory 与铁磁磁畴内场模型 DomainFieldModel
 │   ├── muonium_hopping.hxx            # 各向同性缪子素（mu+ ⊗ e-）4×4 密度矩阵相干跳跃演化
 │   ├── anisotropic_muonium.hxx        # 轴对称偶极自由基 4×4 轨迹与 Cox (2011) 两态化学交换 30×30 刘维尔主方程（alpha-S8）
-│   ├── stopped_decay.hxx              # mu+ 单事例寿命抽样与无质量最低阶自由 Michel 正电子抽样
+│   ├── stopped_decay.hxx              # mu+ 单事例寿命自旋演化与精确有限电子质量 LO Michel 正电子抽样
 │   ├── bound_dio_data.hxx             # 14 段切比雪夫 + Bernstein 包络哈希认证多核素有质量 DIO 谱表（63/65Cu, 56Fe, 32S）
 │   ├── bound_dio.hxx / copper_dio*.hxx
 │   ├── mu_minus_spin0.hxx             # 零核自旋（I=0）束缚 1s mu- 演化、磁畴内场与 DIO/俘获竞争引擎（56Fe, 32S）
@@ -74,7 +75,7 @@ target_link_libraries(YourGeant4Target PRIVATE MuSpinDynamic::Core)
 ### C++ 调用示例（桥接 Geant4 `G4UniformRand()`）
 
 ```cpp
-#include "mu_spin_dynamic/spin_dynamic_decay.hxx"
+#include "mu_spin_dynamic/material_config.hxx"
 #include "Randomize.hh" // Geant4 G4UniformRand()
 
 auto rng = mu_spin_dynamic::make_uniform_rng([] { return G4UniformRand(); });
@@ -86,18 +87,25 @@ muon.initial_polarization = {pol_x, pol_y, pol_z};
 muon.charge = muon_charge; // +1 或 -1
 muon.stop_time_ns = stop_time_ns;
 
-const auto mat_plus = mu_spin_dynamic::make_copper_mu_plus_example(B_ext_T);
-const mu_spin_dynamic::AnyMuMinusMaterial mat_minus =
-    mu_spin_dynamic::make_copper_mu_minus_conditional(63, B_ext_T);
+mu_spin_dynamic::MaterialConfig cfg{};
+cfg.preset = "copper"; // 铜靶默认自然铜（69.15% 63Cu / 30.85% 65Cu）
+cfg.external_field = B_ext_T;
+cfg.field_explicit = true;
+const auto mats = mu_spin_dynamic::build_material_pair(cfg);
 
+// 方式 A：由 MuSpinDynamic 直接输出有限电子质量 Michel / DIO 末态
 const auto res = mu_spin_dynamic::simulate_stopped_muon_decay(
-    muon, mat_plus, mat_minus, rng);
+    muon, mats.mu_plus, mats.mu_minus, rng);
 
 if (res.has_decay_lepton) {
     // 出生时刻: res.decay_time_ns [ns]
     // 动量: res.momentum_MeV_c [MeV/c], 动能: res.kinetic_energy_MeV [MeV]
     // PDG: res.lepton_pdg (-11 为 e+, +11 为 e-)
 }
+
+// 方式 B（仅自旋演化，供 Geant4/Mustard NLO 辐射衰变等外部末态生成器接管）:
+const auto term = mu_spin_dynamic::evolve_mu_plus_to_decay(muon, mats.mu_plus, rng);
+// 使用 term.decay_time_ns 与 term.decay_polarization 交由外部衰变通道生成末态
 ```
 
 ---
@@ -156,34 +164,38 @@ root -l -b -q -e 'gInterpreter->AddIncludePath("include")' \
 
 ---
 
-### 方案 B：ROOT 文件批处理模式（`.root` 输入 $\to$ `.root` 输出）
+### 方案 B：ROOT 文件流式批处理模式（`.root` 输入 $\to$ `.root` 输出）
 
 - **输入 `.root` 文件规范（1 个 `TTree` entry = 1 个停止缪子）**
   - 默认读取名为 `stopped_muons` 的 `TTree`（若文件中仅存在唯一一个 `TTree` 会自动识别，也可通过 `--input-tree <name>` 显式指定）。
   - 必需分支：
     - 停止位置：`stop_x`, `stop_y`, `stop_z`（兼容 `x`, `y`, `z` 或 `pos_x`, `pos_y`, `pos_z`）
     - 停止时实验室系初始极化：`pol_x`, `pol_y`, `pol_z`（兼容 `P0_x`, `P0_y`, `P0_z` 或 `px0`, `py0`, `pz0`）
-  - 可选分支（缺省时使用 entry 下标或命令行 `--charge` / `--stop-time` 默认值）：
-    - `event_id`（整数，母缪子事例编号）
+  - 可选分支（缺省时使用 entry 下标或命令行 `--charge` / `--stop-time` / `--weight` 默认值）：
+    - `event_id`（整数，母缪子事例编号；默认 `--event-seeded` 模式下要求唯一）
     - `charge`（整数，`+1` 为 $\mu^+$，`-1` 为 $\mu^-$）
     - `stop_time_ns`（浮点，停止时刻 [ns]）
+    - `weight`（浮点，母事例权重，兼容 `Weight` / `event_weight`，默认 `1.0`）
 
-- **输出 `.root` 文件规范（1 个 `TTree` entry = 1 个 Michel 正电子 / DIO 电子）**
+- **输出 `.root` 文件规范（$O(1)$ 内存流式写出，支持事件分裂与核俘获占位）**
   - 默认输出到名为 `michel_electrons` 的 `TTree`（可通过 `--output-tree <name>` 修改）。
-  - **严格保证每个 entry 对应一个真实出射的衰变正/负电子**：当负缪子发生原子核俘获（`nuclear_capture`，无出射衰变电子）时，不向 `michel_electrons` 写入空占位行；文件顶层同时保存 `TParameter<Long64_t>` 统计量 `n_input_muons`、`n_michel_electrons` 和 `n_nuclear_captures` 以保证计数闭合。
-  - 每个电子 entry 包含的主要分支：
-    - 溯源索引：`electron_id`、`muon_entry`、`event_id`、`muon_charge`
-    - 电子属性与时空顶点：`pdg`（$e^+$ 为 `-11`，$e^-$ 为 `11`）、`charge`（$\pm 1$）、`x`, `y`, `z`、`stop_time_ns`、`elapsed_time_ns`、`decay_time_ns`
+  - **默认保留 $\mu^-$ 核俘获占位（`--keep-captures` 默认开启）**：每条输入停缪对应严格 `K` 条输出（`--replicas K`，权重自动缩放为 `weight / K`）。通过 `has_decay_lepton`（`Bool_t`）区分出射电子与核俘获占位；核俘获行 `electron_id = -1`、电子能量/动量分支填 `NAN`。若仅需纯电子清单，可显式传 `--electrons-only`。
+  - **默认按事例派生确定性随机流（`--event-seeded` 默认开启）**：由 `(seed, event_id, replica_id)` 经 SplitMix64 + Xoshiro256** 派生独立随机流，支持集群分片并行结果逐事例一致，并自动拦截重复 `event_id`；如需传统单流顺序 `TRandom3`，可传 `--sequential-rng`。
+  - 文件顶层保存汇总元数据 `n_input_muons`、`n_simulated_events`、`n_written_entries`、`n_michel_electrons`、`n_nuclear_captures`、`n_replicas`、`keep_captures`、`event_seeded`、`seed`、`material_preset` 与 `external_field_T`。
+  - 主要分支：
+    - 溯源与权重：`electron_id`、`muon_entry`、`event_id`、`replica_id`、`weight`、`has_decay_lepton`、`muon_charge`
+    - 电子属性与时空顶点：`pdg`（$e^+$ 为 `-11`，$e^-$ 为 `11`，核俘获为 `0`）、`charge`（$\pm 1$ 或 `0`）、`x`, `y`, `z`、`stop_time_ns`、`elapsed_time_ns`、`decay_time_ns`
     - 运动学参数：`total_energy_MeV`、`kinetic_energy_MeV`、`momentum_MeV_c`、`px_MeV_c`, `py_MeV_c`, `pz_MeV_c`、`dir_x`, `dir_y`, `dir_z`、`endpoint_MeV`、`reduced_energy_x`
     - 自旋演化信息：`P0_x/y/z`、`Pdecay_x/y/z`、`hop_count`、`spin_category`、`termination`、`spectrum_model`
 
-- **命令行运行方案 B**：
+- **命令行运行方案 B（含事件分裂示例）**：
 
   ```bash
   ./build/spin_dynamic_decay \
     --input stopped_muons.root \
     --output michel_electrons.root \
     --material copper \
+    --replicas 10 \
     --B 0 100e-6 0 \
     --seed 123
   ```

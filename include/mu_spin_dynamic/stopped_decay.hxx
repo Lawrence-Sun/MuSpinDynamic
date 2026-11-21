@@ -11,9 +11,10 @@
 
 namespace stopped_muon {
 
-// Adopted muon rest mass in MeV; massless LO daughter endpoint is half this value.
-inline constexpr double muon_mass_MeV = 105.6583755;
-inline constexpr const char* free_michel_model = "free_michel_LO_massless";
+// Finite-electron-mass leading-order (V-A) Michel decay constants (muon_mass_MeV & electron_mass_MeV in types.hxx).
+inline constexpr double michel_endpoint_MeV =
+    (muon_mass_MeV * muon_mass_MeV + electron_mass_MeV * electron_mass_MeV) / (2.0 * muon_mass_MeV);
+inline constexpr const char* free_michel_model = "free_michel_LO_finite_me";
 
 struct MichelPositron {
     double energy_MeV;
@@ -32,11 +33,21 @@ inline MichelPositron sample_muplus_michel(const Vec3& polarization, Rng& rng) {
     // Only the angular sampler bounds numerical norm drift; the stored spin state is never changed.
     const double scale = 1 / std::max(1., magnitude);
     const Vec3 p = scale * polarization;
-    double x;
+    const double x0 = electron_mass_MeV / michel_endpoint_MeV;
+    const double r_x0 = (electron_mass_MeV / muon_mass_MeV) * x0;
+    double x = 0.0;
+    double p_red = 0.0;
+    double denom = 0.0;
     do {
-        x = rng.Rndm();
-    } while (x == 0 || rng.Rndm() >= x * x * (3 - 2 * x)); // f(x)/2, envelope height 2.
-    const double a = (2 * x - 1) / (3 - 2 * x);
+        x = x0 + (1.0 - x0) * rng.Rndm();
+        p_red = 0.0;
+        denom = 0.0;
+        const double x2_minus_x02 = (x - x0) * (x + x0);
+        if (x2_minus_x02 <= 0.0) continue;
+        p_red = std::sqrt(x2_minus_x02);
+        denom = 3.0 * x - 2.0 * x * x - x0 * x0;
+    } while (p_red <= 0.0 || denom <= 0.0 || rng.Rndm() >= p_red * denom); // Envelope height 1 >= x^2(3-2x) > p_red*denom.
+    const double a = p_red * (2.0 * x - 1.0 - r_x0) / denom;
     const double envelope = 1 + std::abs(a) * std::min(1., magnitude);
     Vec3 direction;
     double weight;
@@ -47,8 +58,10 @@ inline MichelPositron sample_muplus_michel(const Vec3& polarization, Rng& rng) {
         direction = {transverse * std::cos(phi), transverse * std::sin(phi), z};
         weight = 1 + a * p.Dot(direction); // mu+ sign: high-energy positrons favor +P.
     } while (rng.Rndm() * envelope >= weight);
-    const double energy = .5 * muon_mass_MeV * x;
-    return {energy, energy * direction, scale};
+    const double energy = michel_endpoint_MeV * x;
+    const double p_mag = std::sqrt(
+        std::max(0.0, (energy - electron_mass_MeV) * (energy + electron_mass_MeV)));
+    return {energy, p_mag * direction, scale};
 }
 
 struct MuPlusMaterial {
@@ -81,6 +94,23 @@ using MuPlusTrajectory = std::variant<
     AnisotropicMuoniumTrajectory,
     TwoStateExchangeTrajectory>;
 
+struct MuPlusSpinEvolutionEvent {
+    int charge;
+    SpinState spin_state;
+    double decay_time_ns;
+    Vec3 initial_polarization;
+    Vec3 decay_polarization;
+    MuPlusTrajectory trajectory;
+    const char* termination = "decay";
+
+    Vec3 polarization(double time_ns) const {
+        return std::visit([&](const auto& track) { return track.polarization(time_ns); }, trajectory);
+    }
+    std::size_t hop_count() const {
+        return std::visit([](const auto& track) { return track.hop_count(); }, trajectory);
+    }
+};
+
 struct MuPlusEvent {
     int charge;
     SpinState spin_state;
@@ -100,9 +130,11 @@ struct MuPlusEvent {
     }
 };
 
+// Evolves stopped mu+ spin up to the sampled decay time without sampling Michel positron kinematics.
+// Useful when an external generator (e.g., Geant4/Mustard NLO radiative decay) handles the final state.
 template <typename Rng>
-inline MuPlusEvent simulate_stopped_muon(const MuPlusMaterial& material, int charge,
-                                         const Vec3& p0, Rng& rng) {
+inline MuPlusSpinEvolutionEvent evolve_stopped_muon(const MuPlusMaterial& material, int charge,
+                                                    const Vec3& p0, Rng& rng) {
     if (charge != 1) throw std::invalid_argument("stage B supports charge=+1 only; mu- capture/DIO is not implemented");
     // Deterministic input failures do not consume RNG; stochastic trajectory-budget failures can.
     (void)SpinEvolution(SpinState::MuPlus, p0, {material.external_field, 0, 0});
@@ -223,8 +255,23 @@ inline MuPlusEvent simulate_stopped_muon(const MuPlusMaterial& material, int cha
             time, rng, material.max_hops);
     }();
     const Vec3 decay_p = std::visit([&](const auto& track) { return track.polarization(time); }, trajectory);
-    const auto positron = sample_muplus_michel(decay_p, rng);
-    return {1, muonium ? SpinState::Muonium : SpinState::MuPlus, time, p0, decay_p, positron, std::move(trajectory)};
+    return {1, muonium ? SpinState::Muonium : SpinState::MuPlus, time, p0, decay_p, std::move(trajectory)};
+}
+
+template <typename Rng>
+inline MuPlusEvent simulate_stopped_muon(const MuPlusMaterial& material, int charge,
+                                         const Vec3& p0, Rng& rng) {
+    auto spin_ev = evolve_stopped_muon(material, charge, p0, rng);
+    const auto positron = sample_muplus_michel(spin_ev.decay_polarization, rng);
+    return {
+        spin_ev.charge,
+        spin_ev.spin_state,
+        spin_ev.decay_time_ns,
+        spin_ev.initial_polarization,
+        spin_ev.decay_polarization,
+        positron,
+        std::move(spin_ev.trajectory),
+    };
 }
 
 } // namespace stopped_muon

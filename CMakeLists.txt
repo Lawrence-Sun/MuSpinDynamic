@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.18)
 
-project(MuSpinDynamic VERSION 0.1.0 LANGUAGES CXX)
+project(MuSpinDynamic VERSION 0.2.0 LANGUAGES CXX)
 
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     set(MUSPINDYNAMIC_IS_TOP_LEVEL ON)
@@ -11,11 +11,15 @@ endif()
 option(MUSPINDYNAMIC_BUILD_APPS "Build standalone spin_dynamic_decay CLI application" ${MUSPINDYNAMIC_IS_TOP_LEVEL})
 option(MUSPINDYNAMIC_BUILD_TESTING "Build and register unit tests with CTest" ${MUSPINDYNAMIC_IS_TOP_LEVEL})
 option(MUSPINDYNAMIC_ENABLE_ROOT_IO "Define MuSpinDynamic::RootIO target when ROOT RIO/Tree/Physics are available" ON)
+option(MUSPINDYNAMIC_INSTALL "Install headers and CMake package config" ${MUSPINDYNAMIC_IS_TOP_LEVEL})
+
+include(GNUInstallDirs)
 
 find_package(ROOT REQUIRED COMPONENTS GenVector Matrix)
 
 # Pure single-event physics core (header-only; no Geant4, Mustard, TFile/TTree, or TRandom3 dependency)
 add_library(MuSpinDynamic_Core INTERFACE)
+set_target_properties(MuSpinDynamic_Core PROPERTIES EXPORT_NAME Core)
 add_library(MuSpinDynamic::Core ALIAS MuSpinDynamic_Core)
 add_library(MuSpinDynamic::MuSpinDynamic ALIAS MuSpinDynamic_Core)
 
@@ -23,7 +27,7 @@ target_compile_features(MuSpinDynamic_Core INTERFACE cxx_std_17)
 target_include_directories(MuSpinDynamic_Core
     INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<INSTALL_INTERFACE:include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_link_libraries(MuSpinDynamic_Core
     INTERFACE
@@ -39,6 +43,7 @@ if(MUSPINDYNAMIC_ENABLE_ROOT_IO OR MUSPINDYNAMIC_BUILD_APPS OR MUSPINDYNAMIC_BUI
     find_package(ROOT QUIET OPTIONAL_COMPONENTS RIO Tree Physics MathCore)
     if(TARGET ROOT::RIO AND TARGET ROOT::Tree AND TARGET ROOT::Physics)
         add_library(MuSpinDynamic_RootIO INTERFACE)
+        set_target_properties(MuSpinDynamic_RootIO PROPERTIES EXPORT_NAME RootIO)
         add_library(MuSpinDynamic::RootIO ALIAS MuSpinDynamic_RootIO)
         target_link_libraries(MuSpinDynamic_RootIO
             INTERFACE
@@ -87,29 +92,30 @@ if(MUSPINDYNAMIC_BUILD_TESTING)
 endif()
 
 # Install & CMake package export
-include(GNUInstallDirs)
-include(CMakePackageConfigHelpers)
+if(MUSPINDYNAMIC_INSTALL)
+    include(CMakePackageConfigHelpers)
 
-install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-install(TARGETS ${MUSPINDYNAMIC_EXPORT_TARGETS} EXPORT MuSpinDynamicTargets)
-install(EXPORT MuSpinDynamicTargets
-    FILE MuSpinDynamicTargets.cmake
-    NAMESPACE MuSpinDynamic::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/MuSpinDynamic
-)
+    install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    install(TARGETS ${MUSPINDYNAMIC_EXPORT_TARGETS} EXPORT MuSpinDynamicTargets)
+    install(EXPORT MuSpinDynamicTargets
+        FILE MuSpinDynamicTargets.cmake
+        NAMESPACE MuSpinDynamic::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/MuSpinDynamic
+    )
 
-configure_package_config_file(
-    cmake/MuSpinDynamicConfig.cmake.in
-    ${CMAKE_CURRENT_BINARY_DIR}/MuSpinDynamicConfig.cmake
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/MuSpinDynamic
-)
-write_basic_package_version_file(
-    ${CMAKE_CURRENT_BINARY_DIR}/MuSpinDynamicConfigVersion.cmake
-    VERSION ${PROJECT_VERSION}
-    COMPATIBILITY SameMajorVersion
-)
-install(FILES
-    ${CMAKE_CURRENT_BINARY_DIR}/MuSpinDynamicConfig.cmake
-    ${CMAKE_CURRENT_BINARY_DIR}/MuSpinDynamicConfigVersion.cmake
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/MuSpinDynamic
-)
+    configure_package_config_file(
+        cmake/MuSpinDynamicConfig.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/MuSpinDynamicConfig.cmake
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/MuSpinDynamic
+    )
+    write_basic_package_version_file(
+        ${CMAKE_CURRENT_BINARY_DIR}/MuSpinDynamicConfigVersion.cmake
+        VERSION ${PROJECT_VERSION}
+        COMPATIBILITY SameMajorVersion
+    )
+    install(FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/MuSpinDynamicConfig.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/MuSpinDynamicConfigVersion.cmake
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/MuSpinDynamic
+    )
+endif()

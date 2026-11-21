@@ -25,6 +25,8 @@ inline constexpr double pi = 3.14159265358979323846; // pi
 inline constexpr double deg = pi / 180.0;            // degrees
 
 // --- physics constants ---
+inline constexpr double muon_mass_MeV = 105.6583755;
+inline constexpr double electron_mass_MeV = 0.51099895069;
 inline constexpr double muon_lifetime = 2196.9811 * ns;
 inline constexpr double gamma_muon = 0.850723 * rad / (ns * tesla);
 inline constexpr double gamma_electron = 176.085962784 * rad / (ns * tesla);
